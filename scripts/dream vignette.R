@@ -43,3 +43,13 @@ topTable(fitmm, coef = "Disease1", number = 3)
 topTable(fitmm, coef = "Disease1", number = Inf, p.value = 0.05)
 savedTable <- topTable(fitmm, coef = "Disease1", number = Inf, p.value = 0.05) %>%
   arrange(P.Value)
+
+#testing an mds plot?
+p <- plotMDS(dge)
+#it works on the normalized genes
+#you need to define a pch and color vector
+pch_list <- c(rep(1, 12), rep(2,12))
+pch_color <- c(rep("black",12), rep("red",12))
+p <- plotMDS(dge, pch = pch_list, col = pch_color)
+#this labels them correctly. Now you know how to label by group!
+#Make sure that dge is sorted appropriately
