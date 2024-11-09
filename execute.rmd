@@ -1,0 +1,106 @@
+---
+title: "BrdU RNA-seq"
+author: "Andrew Ding-Su"
+date: "2024-11-08"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+#library calls
+library("tidyverse")
+library("variancePartition")
+library("edgeR")
+library("BiocParallel")
+library("readxl")
+
+source("./scripts/1 normalize.R")
+
+```
+
+```{r}
+#Load data
+count_data <- read.csv("./data/countMatrix.csv")
+animals <- read_xlsx("./data/library_info.xlsx") 
+
+```
+```{r cleaning, include = FALSE}
+animals <- animals %>%
+  mutate(sample = `Sample no.`, 
+         animal = factor(Animal), 
+         timepoint = factor(Timepoint, levels = c("21dpi","nec")),
+         cd8_depleted = factor(cd8_depleted, levels = c("N","Y")),
+         infected = factor(infected, levels = c("N","Y")),
+         aids = factor(aids, levels = c("N","Y")),
+         sive = factor(sive, levels = c("N","Y")),
+         plus_minus = factor(`plus/minus`, levels = c("minus","plus")),
+         library_date,
+         .keep = "none") %>%
+  #relocate(sample, .before = animal) %>%
+  
+  #let's fix the order
+  select(sample, 
+         animal, 
+         timepoint, 
+         cd8_depleted, 
+         infected, 
+         aids, 
+         sive, 
+         plus_minus, 
+         library_date) %>% 
+  
+  #next steps are to get the sample names to match
+  mutate(sample = ifelse(sample <= 9, paste0("0",sample), sample)) %>%
+  mutate(sample = paste0("sample_",sample))
+
+#set rownames
+rownames(animals) <- animals$sample
+```
+```{r}
+#Normalize reads
+dge <- normalize_reads(count_data)
+
+# Specify parallel processing parameters
+# this is used implicitly by dream() to run in parallel
+param <- SnowParam(4, "SOCK", progressbar = TRUE)
+
+#Specify model 
+max_form <- ~ infected + cd8_depleted + aids + sive + plus_minus + (1|animal)
+interact_form <- ~ cd8_depleted + infected + timepoint*plus_minus + (1|animal)
+
+#estimate weights using linear mixed model
+v_obj_dream <- voomWithDreamWeights(dge, form, animals, BPPARAM = param)
+#fitmm <- dream(v_obj_dream, form, animals)
+#fitmm <- eBayes(fitmm)
+
+topTable(fitmm, coef = "plus_minusplus", number=Inf)
+
+v_obj_interact <- voomWithDreamWeights(dge, interact_form, animals, BPPARAM = param)
+fit_interact <- dream(v_obj_interact, interact_form, animals)
+fit_interact <- eBayes(fit_interact)
+
+topTable(fit_interact, coef = "timepointnec:plus_minusplus", number=Inf) %>%
+  filter(P.Value <= 0.05) %>%
+  arrange(desc(logFC))
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
