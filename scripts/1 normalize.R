@@ -12,7 +12,7 @@ normalize_reads <- function(data){
   dge <- calcNormFactors(dge)
   
   # TODO REMOVE THIS LATER, subsetting dge to make this fast
-  #dge <- dge[1:1000, ]
+  # dge <- dge[1:1000, ]
   
   return(dge)
 }

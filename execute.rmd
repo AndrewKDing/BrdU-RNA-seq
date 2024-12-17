@@ -56,10 +56,12 @@ animals <- animals %>%
 
 #set rownames
 rownames(animals) <- animals$sample
-```
-```{r}
+
 #Normalize reads
 dge <- normalize_reads(count_data)
+```
+```{r modeling}
+
 
 # Specify parallel processing parameters
 # this is used implicitly by dream() to run in parallel
