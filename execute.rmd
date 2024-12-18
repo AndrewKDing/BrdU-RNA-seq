@@ -16,6 +16,8 @@ library("BiocParallel")
 library("readxl")
 
 source("./scripts/1 normalize.R")
+source("./scripts/2 analysis.R")
+source("./scripts/3 graphing.R")
 
 ```
 
@@ -23,6 +25,7 @@ source("./scripts/1 normalize.R")
 #Load data
 count_data <- read.csv("./data/countMatrix.csv")
 animals <- read_xlsx("./data/library_info.xlsx") 
+brdu_values <- read.csv("./data/brdu_values.csv")
 
 ```
 ```{r cleaning, include = FALSE}
@@ -35,31 +38,81 @@ animals <- animals %>%
          aids = factor(aids, levels = c("N","Y")),
          sive = factor(sive, levels = c("N","Y")),
          plus_minus = factor(`plus/minus`, levels = c("minus","plus")),
-         library_date,
+         library_date = factor(library_date),
+         sort_date = factor(sort_date),
+         RNA_date = factor(RNA_date),
          .keep = "none") %>%
-  #relocate(sample, .before = animal) %>%
-  
-  #let's fix the order
-  select(sample, 
-         animal, 
-         timepoint, 
-         cd8_depleted, 
-         infected, 
-         aids, 
-         sive, 
-         plus_minus, 
-         library_date) %>% 
   
   #next steps are to get the sample names to match
   mutate(sample = ifelse(sample <= 9, paste0("0",sample), sample)) %>%
   mutate(sample = paste0("sample_",sample))
-
-#set rownames
+animals <- as.data.frame(animals)
 rownames(animals) <- animals$sample
 
-#Normalize reads
+#fixing data from brdu_values
+brdu_values <- brdu_values %>%
+  mutate(sample = `Sample.no.`) %>%
+  mutate(sample = ifelse(sample <= 9, paste0("0",sample), sample)) %>%
+  mutate(sample = paste0("sample_",sample))
+rownames(brdu_values) <- brdu_values$sample
+
+#Create full metadata sheet by merging animals with brdu_values
+animals_merged <- merge(animals, brdu_values, by=0, all=TRUE) %>%
+  mutate(sample = sample.x,
+         animal,
+         timepoint,
+         cd8_depleted,
+         infected,
+         aids,
+         sive,
+         plus_minus,
+         library_date,
+         sort_date,
+         RNA_date,
+         per_brdu,
+         .keep = "none")
+  #removing JE42 due to strong batch effect, probably related to storage.
+  #filter(!animal %in% c("JE42"))
+rownames(animals_merged) <- animals_merged$sample
+
+#generate dgelist object for analyses
 dge <- normalize_reads(count_data)
 ```
+
+##Principal component analyses
+
+I performed principal component analyses to visualize similarity/dissimilarity between samples. Clustering is used to detect batch effects and identify biological differences. 
+
+
+```{r PCA, echo = false}
+experiment_mod <- model.matrix( ~ animals_merged$timepoint + animals_merged$infected + animals_merged$sive + animals_merged$aids + animals_merged$plus_minus) #full model
+
+#normalizing reads, removing batch effect
+dge_norm <- cpm(dge, log=TRUE, prior.count=3)
+batch_corrected <- removeBatchEffect(dge_norm, batch=animals_merged$RNA_date, batch2 = animals_merged$sort_date, design = experiment_mod)
+#calculating principal components and merging with metadata table
+pca_corrected <- prcomp(t(batch_corrected))
+pca_corrected_matrix <- as.data.frame(pca_corrected$x)
+pca_corrected_matrix_merged <- merge(pca_corrected_matrix, animals_merged, by=0)
+
+pca_plot <- function(group){
+  group <- sym(group)
+  
+  ggplot(pca_corrected_matrix_merged, aes(PC1, PC2, color = !!group)) + 
+  geom_point() +
+  theme_bw()
+}
+
+graph_list <- lapply(names(pca_corrected_matrix_merged[42:51]), pca_plot)
+
+graph_list
+```
+
+
+## Notes to self
+# Make comparisons in monocytes that predict SIVE, it looks like rapid progressors are different than slow progressors
+#Split up the graphs to make it easier to see
+# Looks like BrdU pos and negative are pretty similar at all timepoints, but they trend different over time, if that makes sense. So make timepoint and sive comparisons
 ```{r modeling}
 
 
@@ -85,6 +138,24 @@ fit_interact <- eBayes(fit_interact)
 topTable(fit_interact, coef = "timepointnec:plus_minusplus", number=Inf) %>%
   filter(P.Value <= 0.05) %>%
   arrange(desc(logFC))
+```
+
+## Supplementary data
+# Batch correction
+Samples extracted 2024-06-28 (cyan) and 2024-05-28 (red) cluster very far apart. These two batches had animals with virtually the same conditions and therefore should cluster together. Therefore, I batch corrected by RNA extraction date
+
+```{r rna_batching, echo = FALSE, fig.cap = "batch effect from RNA extraction"}
+#calculating and extracting matrix of principal components
+pca_data <- pca_extract(dge)
+pca_matrix <- as.data.frame(pca_data$x)
+
+#merging principal components with animal metadata
+pca_matrix_merged <- merge(pca_matrix, animals_merged, by=0)
+
+ggplot(pca_matrix_merged, aes(PC1, PC2, color=RNA_date)) +
+  geom_point() +
+  theme_bw()
+
 ```
 
 ## R Markdown
