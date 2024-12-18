@@ -32,7 +32,7 @@ brdu_values <- read.csv("./data/brdu_values.csv")
 animals <- animals %>%
   mutate(sample = `Sample no.`, 
          animal = factor(Animal), 
-         timepoint = factor(Timepoint, levels = c("21dpi","nec")),
+         timepoint = factor(Timepoint, levels = c("0","21dpi","nec")),
          cd8_depleted = factor(cd8_depleted, levels = c("N","Y")),
          infected = factor(infected, levels = c("N","Y")),
          aids = factor(aids, levels = c("N","Y")),
@@ -71,8 +71,6 @@ animals_merged <- merge(animals, brdu_values, by=0, all=TRUE) %>%
          RNA_date,
          per_brdu,
          .keep = "none")
-  #removing JE42 due to strong batch effect, probably related to storage.
-  #filter(!animal %in% c("JE42"))
 rownames(animals_merged) <- animals_merged$sample
 
 #generate dgelist object for analyses
@@ -81,10 +79,12 @@ dge <- normalize_reads(count_data)
 
 ##Principal component analyses
 
-I performed principal component analyses to visualize similarity/dissimilarity between samples. Clustering is used to detect batch effects and identify biological differences. 
+Clustering is first used for quality control. Then, clustering is used to visualize similarities and differences between samples. These similarities and differences are used to guide differential expression analyses.
 
+#Quality control
+After batch correction (see supplemental figures), non-infected and infected animals cluster separately as expected. Within non-infected animals, cd8-depleted and non-depleted animals cluster separately. This indicates that batch correction was performed properly and data quality is good. 
 
-```{r PCA, echo = false}
+```{r PCAquality, echo = false}
 experiment_mod <- model.matrix( ~ animals_merged$timepoint + animals_merged$infected + animals_merged$sive + animals_merged$aids + animals_merged$plus_minus) #full model
 
 #normalizing reads, removing batch effect
@@ -95,21 +95,96 @@ pca_corrected <- prcomp(t(batch_corrected))
 pca_corrected_matrix <- as.data.frame(pca_corrected$x)
 pca_corrected_matrix_merged <- merge(pca_corrected_matrix, animals_merged, by=0)
 
-pca_plot <- function(group){
+pca_plot <- function(data, group){
   group <- sym(group)
   
-  ggplot(pca_corrected_matrix_merged, aes(PC1, PC2, color = !!group)) + 
+  ggplot(data, aes(PC1, PC2, color = !!group)) + 
   geom_point() +
   theme_bw()
 }
 
-graph_list <- lapply(names(pca_corrected_matrix_merged[42:51]), pca_plot)
-
-graph_list
+pca_plot(pca_corrected_matrix_merged, "infected")
+pca_plot(pca_corrected_matrix_merged, "cd8_depleted")
 ```
+#The expression profile of BrdU+ monocytes change substantially with infection.
+The expression profile of BrdU+ monocytes change substantially with infection. BrdU-negative monocytes are similar between non-infected and infected animals. 
+```{r PCAdifferences, echo = false}
+pca_plot(pca_corrected_matrix_merged, "timepoint")
+pca_plot(pca_corrected_matrix_merged, "plus_minus")
+
+```
+
+The following analyses focus on BrdU+ monocytes. 
+#BrdU+ monocytes move further away from normal with SIVE development, and return to a "normal" expression profile without SIVE. 
+Arrows connect individuals from day 21 post infection to necropsy. Non-infected animals are located on the left of the PCA plot.
+
+```{r echo = false}
+pca_brduplus <- pca_corrected_matrix_merged %>%
+  filter(plus_minus == "plus") %>%
+  filter(!Row.names == "sample_27") %>%
+  arrange(timepoint)
+
+pca_plot(pca_brduplus, "sive") +
+  geom_path(aes(x = PC1, y = PC2, group=animal),
+            arrow = arrow(length = unit(0.55,"cm")))
+
+```
+
+#BrdU+ expression profiles at dpi21 predict SIVE development
+BrdU+ monocytes cluster timepoint and by SIVE status
+This graph is a PCA of only BrdU+ monocytes from infected animals. The purpose is to better visualize differences among infected animals.
+
+```{r echo = false}
+#dge_norm contains normalized read counts
+#removing non-infected animals to look at differences among SIV+ animals better
+#steps: 1) identify infected, brdu+ sample ids 2) selected infected animals 3) perform pca
+
+#generate a list of samples that are brdu and infected
+
+brdu_inf <- animals_merged %>%
+  select(infected, plus_minus) %>%
+  filter(infected == "Y" & plus_minus == "plus") %>%
+  t()
+
+#pretty nifty. subsets only infected, brduplus samples, then performs prcomp
+pca_inf_plus <- batch_corrected %>%
+  subset(TRUE, colnames(brdu_inf)) %>%
+  t() %>%
+  prcomp() %>%
+  #pipe operator is my savior 
+  (function(i) i$x)() %>%
+  as.data.frame() %>%
+  #merging with metadata
+  merge(., y = animals_merged, by = 0) %>%
+  #removing the duplicate sample (used for batch correction) for visualization
+  filter(!Row.names == "sample_27") %>%
+  arrange(timepoint)
+
+pca_plot(pca_inf_plus, "per_brdu") +
+  scale_color_gradient(low = "white", high="blue")
+
+pca_plot(pca_inf_plus, "sive") +
+  geom_path(aes(x = PC1, y = PC2, group=animal),
+            arrow = arrow(length = unit(0.55,"cm")))
+
+pca_plot(pca_inf_plus, "aids") +
+  geom_path(aes(x = PC1, y = PC2, group=animal),
+            arrow = arrow(length = unit(0.55,"cm")))
+
+pca_plot(pca_inf_plus, "timepoint")+
+ geom_path(aes(x = PC1, y = PC2, group=animal),
+            arrow = arrow(length = unit(0.55,"cm")))
+
+pca_plot(pca_inf_plus, "animal") +
+  geom_path(aes(x = PC1, y = PC2, group=animal),
+            arrow = arrow(length = unit(0.55,"cm")))
+```
+#BrdU+ monocytes from SIVnoE animals cluster separately from SIVnoE animals at 21dpi
+We have previously shown that the percentage of BrdU+ monocytes early after infection predicts rapid disease progression and severe SIVE. Here, we find that BrdU+ monocytes from SIVE animals cluster distinctly from SIVnoE animals at 21dpi. This is consistent with an important role for early monocyte dysregulation in SIVE development.
 
 
 ## Notes to self
+#TODO: repeat the above, but with BrdU- monocytes?
 # Make comparisons in monocytes that predict SIVE, it looks like rapid progressors are different than slow progressors
 #Split up the graphs to make it easier to see
 # Looks like BrdU pos and negative are pretty similar at all timepoints, but they trend different over time, if that makes sense. So make timepoint and sive comparisons
