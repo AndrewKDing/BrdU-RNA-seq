@@ -1,12 +1,15 @@
 ---
 title: "BrdU RNA-seq"
 author: "Andrew Ding-Su"
-date: "2024-11-08"
-output: pdf_document
+date: "2024-12-20"
+output:
+   pdf_document:
+     extra_dependencies: ["float"]
 ---
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "")
 
 #library calls
 library("tidyverse")
@@ -14,6 +17,7 @@ library("variancePartition")
 library("edgeR")
 library("BiocParallel")
 library("readxl")
+library("gridExtra")
 
 source("./scripts/1 normalize.R")
 source("./scripts/2 analysis.R")
@@ -21,7 +25,7 @@ source("./scripts/3 graphing.R")
 
 ```
 
-```{r}
+```{r libraries, include = FALSE}
 #Load data
 count_data <- read.csv("./data/countMatrix.csv")
 animals <- read_xlsx("./data/library_info.xlsx") 
@@ -77,14 +81,12 @@ rownames(animals_merged) <- animals_merged$sample
 dge <- normalize_reads(count_data)
 ```
 
-##Principal component analyses
+# Quality control - batch correction
+\quad Technical, non-biological variation due to RNA extraction or sorting introduces batch effects. Batch effects obscure biological variation. When RNA extraction or flow sorting batches are visualized on the PCA graph, a batch effect is clearly present (see Supplementary Figures). As a result of batch effect, the expression profiles of non-infected do not separate cleanly from infected animals (**Figure 1a**).  
 
-Clustering is first used for quality control. Then, clustering is used to visualize similarities and differences between samples. These similarities and differences are used to guide differential expression analyses.
+\quad With batch correction non-infected and infected animals separate cleanly (**Figure 1b**). Subsequent analyses use batch-corrected reads.
 
-#Quality control
-After batch correction (see supplemental figures), non-infected and infected animals cluster separately as expected. Within non-infected animals, cd8-depleted and non-depleted animals cluster separately. This indicates that batch correction was performed properly and data quality is good. 
-
-```{r PCAquality, echo = false}
+```{r echo = FALSE, fig.cap = "After batch correction, infected and non-infected animals cluster independently."}
 experiment_mod <- model.matrix( ~ animals_merged$timepoint + animals_merged$infected + animals_merged$sive + animals_merged$aids + animals_merged$plus_minus) #full model
 
 #normalizing reads, removing batch effect
@@ -95,6 +97,13 @@ pca_corrected <- prcomp(t(batch_corrected))
 pca_corrected_matrix <- as.data.frame(pca_corrected$x)
 pca_corrected_matrix_merged <- merge(pca_corrected_matrix, animals_merged, by=0)
 
+#non-batch corrected, for plotting purposes
+raw_matrix <- pca_extract(dge)
+#piping is not working and I don't want to troubleshoot this right now
+raw_matrix_merged <- as.data.frame(raw_matrix$x) %>%
+  merge(., animals_merged, by=0)
+
+
 pca_plot <- function(data, group){
   group <- sym(group)
   
@@ -103,38 +112,39 @@ pca_plot <- function(data, group){
   theme_bw()
 }
 
-pca_plot(pca_corrected_matrix_merged, "infected")
-pca_plot(pca_corrected_matrix_merged, "cd8_depleted")
-```
-#The expression profile of BrdU+ monocytes change substantially with infection.
-The expression profile of BrdU+ monocytes change substantially with infection. BrdU-negative monocytes are similar between non-infected and infected animals. 
-```{r PCAdifferences, echo = false}
-pca_plot(pca_corrected_matrix_merged, "timepoint")
-pca_plot(pca_corrected_matrix_merged, "plus_minus")
+plot_one_a <- pca_plot(raw_matrix_merged, "infected") +
+  labs(title = "1a",
+       caption = "Prior to batch correction")
 
-```
+plot_one_b <- pca_plot(pca_corrected_matrix_merged, "infected") +
+  labs(title = "1b",
+       caption = "After batch correction")
 
-The following analyses focus on BrdU+ monocytes. 
-#BrdU+ monocytes move further away from normal with SIVE development, and return to a "normal" expression profile without SIVE. 
-Arrows connect individuals from day 21 post infection to necropsy. Non-infected animals are located on the left of the PCA plot.
-
-```{r echo = false}
-pca_brduplus <- pca_corrected_matrix_merged %>%
-  filter(plus_minus == "plus") %>%
-  filter(!Row.names == "sample_27") %>%
-  arrange(timepoint)
-
-pca_plot(pca_brduplus, "sive") +
-  geom_path(aes(x = PC1, y = PC2, group=animal),
-            arrow = arrow(length = unit(0.55,"cm")))
-
+figure_one <- grid.arrange(plot_one_a, plot_one_b, ncol = 2, nrow = 1)
 ```
 
-#BrdU+ expression profiles at dpi21 predict SIVE development
-BrdU+ monocytes cluster timepoint and by SIVE status
-This graph is a PCA of only BrdU+ monocytes from infected animals. The purpose is to better visualize differences among infected animals.
+# The expression profile of BrdU+ monocytes change substantially with infection.
 
-```{r echo = false}
+\quad Two graphs are presented. On the left, the PCA graph has been colored by day post infection; 0dpi corresponds to non-infected animals (**Figure 2a**). On the right, the PCA graph has been colored by BrdU+ vs. BrdU- monocytes (**Figure 2b**. The expression profile of BrdU+ monocytes change substantially with infection, while BrdU-negative monocytes are more similar between non-infected and infected animals. 
+
+```{r echo = FALSE, fig.cap = "Changes in BrdU+ and BrdU- expression profiles with infection"}
+plot_two_a <- pca_plot(pca_corrected_matrix_merged, "timepoint") +
+  labs(title = "2a")
+plot_two_b <- pca_plot(pca_corrected_matrix_merged, "plus_minus") +
+  labs(title = "2b")
+grid.arrange(plot_two_a, plot_two_b, ncol=2, nrow=1)
+
+```
+\newpage
+
+# BrdU+ expression profiles at 21 days post-infection predict SIVE development
+\quad SIV-infected animals with increased %BrdU+ monocytes at days 21 post infection rapidly progress to AIDS and develop severe encephalitis. The identity of BrdU+ monocytes is undefined. In this section, PCA graphs of BrdU+ monocytes from SIV-infected animals are presented.  
+
+\quad The leftmost graph shows all BrdU+ monocytes from SIV-infected animals, annotated by day post infection (**Figure 3a**). The middle graph shows only 21dpi BrdU+ monocytes and is annotated by SIVE status(**Figure 3b**). The rightmost graph displays only necropsy timepoint BrdU+ monocytes and is annotated by SIVE status (**Figure 3c**).  
+
+\quad BrdU+ monocytes at 21dpi and necropsy cluster separately (**Figure 3a**). At 21dpi, Animals that develop SIVE vs. SIVnoE cluster separately on the basis of BrdU+ monocyte expression profiles (**Figure 3b**). At necropsy, BrdU+ expression profiles are similar between SIVE and SIVnoE animals (**Figure 3c**). This suggests early monocyte dysregulation plays a key role in SIVE. This notion is consistent with Burdo (2011). The similarity of monocyte expression profiles at necropsy is consistent with Nowlin (2018).
+
+```{r echo = FALSE, fig.cap = "BrdU+ monocyte expression profile at 21dpi predicts SIVE", fig.height = 9}
 #dge_norm contains normalized read counts
 #removing non-infected animals to look at differences among SIV+ animals better
 #steps: 1) identify infected, brdu+ sample ids 2) selected infected animals 3) perform pca
@@ -160,64 +170,78 @@ pca_inf_plus <- batch_corrected %>%
   filter(!Row.names == "sample_27") %>%
   arrange(timepoint)
 
-pca_plot(pca_inf_plus, "per_brdu") +
-  scale_color_gradient(low = "white", high="blue")
+brdu_early <- pca_inf_plus %>%
+  filter(timepoint == "21dpi")
 
-pca_plot(pca_inf_plus, "sive") +
-  geom_path(aes(x = PC1, y = PC2, group=animal),
-            arrow = arrow(length = unit(0.55,"cm")))
+brdu_late <- pca_inf_plus %>%
+  filter(timepoint == "nec")
 
-pca_plot(pca_inf_plus, "aids") +
-  geom_path(aes(x = PC1, y = PC2, group=animal),
-            arrow = arrow(length = unit(0.55,"cm")))
+plot_3_a <- pca_plot(pca_inf_plus, "timepoint") +
+  labs(title = "3a",
+       caption = "BrdU+ monocytes cluster by timepoint")
 
-pca_plot(pca_inf_plus, "timepoint")+
- geom_path(aes(x = PC1, y = PC2, group=animal),
-            arrow = arrow(length = unit(0.55,"cm")))
+plot_3_b <- pca_plot(brdu_early, "sive") +
+  labs(title = "3b",
+       caption = "BrdU+ monocytes between SIVE vs. SIVnoE animals cluster separately at 21dpi")
 
-pca_plot(pca_inf_plus, "animal") +
-  geom_path(aes(x = PC1, y = PC2, group=animal),
-            arrow = arrow(length = unit(0.55,"cm")))
+plot_3_c <- pca_plot(brdu_late, "sive") +
+  labs(title = "3c",
+       caption = "BrdU+ monocytes are more similar at necropsy, and do not separate by SIVE status")
+
+figure_three <- grid.arrange(plot_3_a, plot_3_b, plot_3_c, 
+                             ncol=1, 
+                             nrow=3)
 ```
-#BrdU+ monocytes from SIVnoE animals cluster separately from SIVnoE animals at 21dpi
-We have previously shown that the percentage of BrdU+ monocytes early after infection predicts rapid disease progression and severe SIVE. Here, we find that BrdU+ monocytes from SIVE animals cluster distinctly from SIVnoE animals at 21dpi. This is consistent with an important role for early monocyte dysregulation in SIVE development.
 
+#Differential expressions
+To identify features of BrdU+ monocytes that predict rapid disease progression, differential expression was performed to compare BrdU+ monocytes from SIVE vs. SIVnoE animals at 21dpi.
 
-## Notes to self
-#TODO: repeat the above, but with BrdU- monocytes?
-# Make comparisons in monocytes that predict SIVE, it looks like rapid progressors are different than slow progressors
-#Split up the graphs to make it easier to see
-# Looks like BrdU pos and negative are pretty similar at all timepoints, but they trend different over time, if that makes sense. So make timepoint and sive comparisons
-```{r modeling}
+```{r differential expression, echo = FALSE}
 
+#using reads without batch correction - batches are included in model as recommended by voom creator
 
+#BIG THING NEED TO FIX THIS. YOU HAVEN'T SUBSETTED FOR 21 DPI.
+counts_brdu_21dpi <- count_data %>%
+  select(c("Geneid","Gene_symbol",colnames(brdu_inf)))
+
+dge_brdu_21dpi <- normalize_reads(counts_brdu_21dpi)
+
+animals_brdu_21dpi <- animals %>%
+  filter(rownames(.) %in% as.list(colnames(brdu_inf)))
+
+#temporarily subsetting
+dge_brdu_21dpi_sub <- dge_brdu_21dpi[1:1000, ]
+test <- dge_brdu_21dpi[1:1000, ]
+
+form <- ~ sive + RNA_date + (1|animal)
+#what in the fuck is going on here, my columns in data match my sample rows. but it says it does not?
+#is my metadata wrong?
+#wait. does my metadata have column names
+#oh. my metadata is empty
+#
+
+v_obj_dream <- voomWithDreamWeights(dge_brdu_21dpi_sub, form, animals_brdu_21dpi, BPPARAM = param)
 # Specify parallel processing parameters
 # this is used implicitly by dream() to run in parallel
-param <- SnowParam(4, "SOCK", progressbar = TRUE)
+
+param <- SnowParam("SOCK", progressbar = TRUE)
 
 #Specify model 
-max_form <- ~ infected + cd8_depleted + aids + sive + plus_minus + (1|animal)
-interact_form <- ~ cd8_depleted + infected + timepoint*plus_minus + (1|animal)
+
 
 #estimate weights using linear mixed model
-v_obj_dream <- voomWithDreamWeights(dge, form, animals, BPPARAM = param)
-#fitmm <- dream(v_obj_dream, form, animals)
-#fitmm <- eBayes(fitmm)
+fitmm <- dream(v_obj_dream, form, animals_brdu_21dpi)
+fitmm <- eBayes(fitmm)
 
-topTable(fitmm, coef = "plus_minusplus", number=Inf)
+topTable(fitmm, coef = "siveY", number=Inf) %>%
+  arrange(desc(logFC)) %>%
+  arrange(adj.P.Val)
 
-v_obj_interact <- voomWithDreamWeights(dge, interact_form, animals, BPPARAM = param)
-fit_interact <- dream(v_obj_interact, interact_form, animals)
-fit_interact <- eBayes(fit_interact)
-
-topTable(fit_interact, coef = "timepointnec:plus_minusplus", number=Inf) %>%
-  filter(P.Value <= 0.05) %>%
-  arrange(desc(logFC))
 ```
 
-## Supplementary data
-# Batch correction
-Samples extracted 2024-06-28 (cyan) and 2024-05-28 (red) cluster very far apart. These two batches had animals with virtually the same conditions and therefore should cluster together. Therefore, I batch corrected by RNA extraction date
+# Supplementary data
+## Batch correction
+\quad Samples extracted 2024-06-28 (cyan) and 2024-05-28 (red) cluster very far apart. These batches are balanced with respect to infection and therefore should cluster together. A similar effect is present for flow sorting batches.
 
 ```{r rna_batching, echo = FALSE, fig.cap = "batch effect from RNA extraction"}
 #calculating and extracting matrix of principal components
@@ -227,28 +251,20 @@ pca_matrix <- as.data.frame(pca_data$x)
 #merging principal components with animal metadata
 pca_matrix_merged <- merge(pca_matrix, animals_merged, by=0)
 
-ggplot(pca_matrix_merged, aes(PC1, PC2, color=RNA_date)) +
+sup_one <- ggplot(pca_matrix_merged, aes(PC1, PC2, color=RNA_date)) +
   geom_point() +
-  theme_bw()
+  theme_bw() +
+  labs(title = "S1a",
+       caption = "PCA graph annotated by RNA batch")
+
+sup_two <- ggplot(pca_matrix_merged, aes(PC1, PC2, color=sort_date)) +
+  geom_point() +
+  theme_bw() + 
+  labs(title = "S2a",
+       caption = "PCA graph annotated by FACS batch")
+
+sup_fig_one <- grid.arrange(sup_one, sup_two, ncol=2, nrow=1)
 
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

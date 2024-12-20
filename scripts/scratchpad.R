@@ -23,3 +23,30 @@ library(ggplot)
 
 
 #Note to self, data should be subsetted PRIOR to multi-dimensional scaling
+
+```{r modeling}
+
+
+# Specify parallel processing parameters
+# this is used implicitly by dream() to run in parallel
+param <- SnowParam(4, "SOCK", progressbar = TRUE)
+
+#Specify model 
+max_form <- ~ infected + cd8_depleted + aids + sive + plus_minus + (1|animal)
+interact_form <- ~ cd8_depleted + infected + timepoint*plus_minus + (1|animal)
+
+#estimate weights using linear mixed model
+v_obj_dream <- voomWithDreamWeights(dge, form, animals, BPPARAM = param)
+#fitmm <- dream(v_obj_dream, form, animals)
+#fitmm <- eBayes(fitmm)
+
+topTable(fitmm, coef = "plus_minusplus", number=Inf)
+
+v_obj_interact <- voomWithDreamWeights(dge, interact_form, animals, BPPARAM = param)
+fit_interact <- dream(v_obj_interact, interact_form, animals)
+fit_interact <- eBayes(fit_interact)
+
+topTable(fit_interact, coef = "timepointnec:plus_minusplus", number=Inf) %>%
+  filter(P.Value <= 0.05) %>%
+  arrange(desc(logFC))
+```
